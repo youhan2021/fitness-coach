@@ -31,59 +31,52 @@ workout-tracker/
 
 ## 使用方法 | Usage
 
-> Prerequisite: Run inside the skill directory.
-> ```bash
-> cd ~/.hermes/skills/fitness/workout-tracker
-> ```
+所有操作通过 Hermès 自然语言指令完成，无需手动运行脚本。
 
 ### 计划管理 | Plan Management
 
-```bash
-# 从文字描述生成计划（AI 自动转 JSON）
-python3 scripts/workout.py plan set '{"name":"我的计划","mode":"weekly","schedule":{"monday":[{"name":"俯卧撑","sets":3,"reps":10}]}}'
-
-# 从本地文件导入
-python3 scripts/workout.py plan import /path/to/plan.json
+```prompt
+# 从文字描述生成计划（AI 自动转 JSON 保存）
+运动计划 每天早上跑步30分钟，周三做俯卧撑和卷腹各3组
 
 # 查看当前计划
-python3 scripts/workout.py plan view
+运动计划查看
+
+# 从本地 JSON 文件导入计划
+运动计划导入 /path/to/plan.json
 ```
 
 ### 训练 | Training
 
-```bash
-# 开始今日训练（交互式）
-python3 scripts/workout.py start
+```prompt
+# 开始今日训练（交互式，逐一动作记录）
+开始运动
 
-# 训练中：完成一组，记录次数
-python3 scripts/workout.py complete-set 12
-
-# 训练中：跳过当前动作
-python3 scripts/workout.py skip-action
+# 跳过当前动作，进入下一个
+跳过此动作
 ```
 
 ### 历史 | History
 
-```bash
-# 查看近30天历史
-python3 scripts/workout.py history
+```prompt
+# 查看近30天训练历史
+运动历史
 
-# 查看近N天历史
-python3 scripts/workout.py history 90
+# 查看近 N 天历史
+运动历史 90
 ```
 
 ### 数据管理 | Data Management
 
-```bash
-# 重置今日记录
-python3 scripts/workout.py reset-today
+```prompt
+# 重置今日训练记录（重新开始）
+重置今日
 
-# 重置指定日期
-python3 scripts/workout.py reset-date 2026-04-18
+# 重置指定日期的训练记录
+重置日期 2026-04-18
 
-# 手动添加历史（补录）
-python3 scripts/workout.py add-record "2026-04-18" \
-  '[{"name":"俯卧撑","sets":[10,10,10]}]' '[]'
+# 手动添加历史记录（补录）
+添加记录 2026-04-18 俯卧撑 10+10+10, 卷腹 15×3
 ```
 
 ---
