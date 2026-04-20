@@ -1,5 +1,7 @@
-# Keep the example, ignore actual data files
-data/plan.json
-data/history.json
-data/.current_workout.json
-scripts/__pycache__/
+# Data files (keep plan.example.json)
+data/
+!data/plan.example.json
+
+# Python cache
+__pycache__/
+*.pyc
