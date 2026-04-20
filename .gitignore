@@ -1,0 +1,4 @@
+# Keep the example, ignore actual data files
+data/plan.json
+data/history.json
+data/.current_workout.json
