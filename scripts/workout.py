@@ -18,27 +18,15 @@ import os
 import sys
 from datetime import datetime, date, timezone, timedelta
 
-# 严格从环境变量 HERMES_SESSION_START 解析真实日期（UTC+8）
-# 格式示例: "2026-04-21T05:15:00+08:00"
-def _get_session_dt():
-    raw = os.environ.get("HERMES_SESSION_START", "")
-    if raw:
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except Exception:
-            pass
-    # Fallback：用 UTC+8（Asia/Shanghai）的当前时间
-    utc8 = timezone(timedelta(hours=8))
-    return datetime.now(utc8)
+# 直接使用系统 UTC+8 时钟（不再依赖 HERMES_SESSION_START 环境变量）
+_UTC8 = timezone(timedelta(hours=8))
 
 def _get_session_dt_local():
-    """当前时刻的UTC+8 datetime（用于timestamp记录）"""
-    dt = _get_session_dt()
-    utc8 = timezone(timedelta(hours=8))
-    return dt.astimezone(utc8)
+    """当前时刻的 UTC+8 datetime（用于 timestamp 记录）"""
+    return datetime.now(_UTC8)
 
 def _get_session_date():
-    """从session时间戳获取真实日期（UTC+8），fallback到系统时间"""
+    """当前真实日期（UTC+8）"""
     return _get_session_dt_local().date()
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -293,34 +293,9 @@ data/
 
 ## ⚠️ 技术注意事项
 
-### 日期必须从 HERMES_SESSION_START 环境变量读取
+### 日期使用系统 UTC+8 时钟
 
-`workout.py` 脚本中的日期/时间计算**禁止**使用 Python 内置的 `date.today()` 或 `datetime.now()`，因为系统时钟可能与实际用户时区不一致。
-
-**正确做法：** 脚本从 `HERMES_SESSION_START` 环境变量解析 session 开始的 UTC 时间戳，再转换为 UTC+8（用户所在时区）。
-
-```python
-from datetime import datetime, timezone, timedelta
-
-def _get_session_dt():
-    raw = os.environ.get("HERMES_SESSION_START", "")
-    if raw:
-        try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except Exception:
-            pass
-    return datetime.now(timezone.utc)  # fallback
-
-def _get_session_dt_local():
-    dt = _get_session_dt()
-    utc8 = timezone(timedelta(hours=8))
-    return dt.astimezone(utc8)
-
-def _get_session_date():
-    return _get_session_dt_local().date()
-```
-
-然后将所有 `date.today()` 替换为 `_get_session_date()`，所有 `datetime.now()` 替换为 `_get_session_dt_local()`。
+`workout.py` 脚本直接使用系统 UTC+8 时钟（`datetime.now(timezone(timedelta(hours=8)))`），不需要任何环境变量。
 
 ### .gitignore 清单
 
