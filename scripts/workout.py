@@ -95,7 +95,8 @@ def plan_view():
     name = plan.get("name", "未命名计划")
     mode = plan.get("mode", "weekly")
     note = plan.get("note", "")
-    lines = [f"📋 **{name}** ({mode}模式)"]
+    today_str = _get_session_date().strftime("%Y-%m-%d %A")
+    lines = [f"📅 {today_str}", f"📋 **{name}** ({mode}模式)"]
     if note:
         lines.append(f"  {note}")
     lines.append("")
