@@ -5,3 +5,16 @@ data/
 # Python cache
 __pycache__/
 *.pyc
+scripts/__pycache__/
+
+# Test cache
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Temp / IDE
+*.swp
+*.swo
+.idea/
+.vscode/

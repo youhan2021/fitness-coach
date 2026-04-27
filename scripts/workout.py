@@ -5,12 +5,16 @@ workout-tracker 主脚本
   python3 workout.py plan set '<json>'
   python3 workout.py plan import <path>
   python3 workout.py plan view
-  python3 workout.py start
+  python3 workout.py start [long|short]
+  python3 workout.py start-session           # 开始训练计时（读今日计划）
+  python3 workout.py log "<date>" '<json>'   # 记录/更新当日训练（追加模式）
+  python3 workout.py finish-workout          # 结束训练（计算时长，清理session）
   python3 workout.py history [days]
   python3 workout.py reset-today
-  python3 workout.py status        # 查看当前训练进度（供agent调用）
-  python3 workout.py complete-set <reps>   # 记录一组完成
+  python3 workout.py status                  # 查看当前训练进度（供agent调用）
+  python3 workout.py complete-set <reps>     # 记录一组完成
   python3 workout.py skip-action             # 跳过当前动作
+  python3 workout.py add-record <date> '<json_completed_list>'
 """
 
 import json
@@ -55,12 +59,136 @@ def get_today_name():
 
 # ─── 计划管理 ───────────────────────────────────────────────
 
-def plan_parse(text: str):
-    """将文字描述转为plan JSON（实际转换由agent完成）"""
-    return {
-        "status": "parse_needed",
-        "text": text
-    }
+def suggest_plan():
+    """根据近2-4周训练情况和目标生成计划调整建议"""
+    from datetime import timedelta
+    today = _get_session_date()
+    two_weeks_ago = today - timedelta(days=14)
+
+    hist_data = load_json(HISTORY_FILE, {"records": []})
+    records = hist_data.get("records", [])
+    body = load_json(BODY_FILE, {})
+    goal = body.get("goal", "增肌")
+
+    # 过滤近两周训练记录
+    recent = []
+    for r in records:
+        try:
+            r_date = datetime.strptime(r.get("date", "2000-01-01"), "%Y-%m-%d").date()
+            if r_date >= two_weeks_ago and r.get("type") == "workout":
+                recent.append(r)
+        except:
+            pass
+
+    if not recent:
+        return "📋 建议生成\n━━━━━━━━━━━━━━━\n近两周没有训练记录，无法分析。\n请先开始训练再生成建议。\n━━━━━━━━━━━━━━━\n目标：{goal}"
+
+    # 分析训练数据
+    total_workouts = len(recent)
+    total_sets = 0
+    muscle_groups = {}  # {部位: sets数}
+    workout_days = set()
+    total_duration = 0
+    exercise_details = {}  # {动作名: [sets_count]}
+
+    for r in recent:
+        w = r.get("workout", {})
+        workout_days.add(r.get("date"))
+        total_duration += w.get("duration_min", 0) or 0
+        for ex in w.get("exercises", []):
+            name = ex.get("name", "?")
+            sets_count = len(ex.get("sets", []))
+            total_sets += sets_count
+            if name not in exercise_details:
+                exercise_details[name] = []
+            exercise_details[name].append(sets_count)
+
+    # 部位映射
+    BACK = ["坐姿划船", "高位下拉", "引体向上", "杠铃划船", "悬挂肩胛", "悬挂肩胛下沉", "离心引体", "背部"]
+    CHEST = ["Chest press", "飞鸟", "卧推", "俯卧撑", "胸"]
+    LEGS = ["Leg press", "腿弯举", "腿外展", "臀桥", "深蹲", "腿"]
+    CORE = ["卷腹", "平板支撑", "腹肌"]
+    SHOULDER = ["肩", "推肩", "侧平举", "Face pull"]
+
+    def classify(name):
+        n = name.lower()
+        if any(b in n for b in [x.lower() for x in BACK]): return "背"
+        if any(c in n for c in [x.lower() for x in CHEST]): return "胸"
+        if any(l in n for l in [x.lower() for x in LEGS]): return "腿"
+        if any(co in n for co in [x.lower() for x in CORE]): return "核心"
+        if any(s in n for s in [x.lower() for x in SHOULDER]): return "肩"
+        return "其他"
+
+    for ex_name, sets_list in exercise_details.items():
+        mg = classify(ex_name)
+        total_ex_sets = sum(sets_list)
+        muscle_groups[mg] = muscle_groups.get(mg, 0) + total_ex_sets
+
+    # 生成建议
+    lines = []
+    lines.append("📋 计划调整建议")
+    lines.append("━━━━━━━━━━━━━━━")
+    lines.append(f"📅 分析区间：最近{two_weeks_ago} ~ {today}")
+    lines.append(f"🏋️ 训练次数：{total_workouts}次 | ⏱总时长：{total_duration}分钟")
+    lines.append(f"📊 总组数：{total_sets}组 | 日均：{total_sets//max(total_workouts,1)}组")
+    lines.append(f"🎯 当前目标：{goal}")
+    lines.append("")
+    lines.append("**📈 近期训练概况**")
+    trained_days = sorted(list(workout_days))
+    lines.append(f"  训练日：{', '.join(trained_days[-5:])}")
+    for mg, cnt in sorted(muscle_groups.items(), key=lambda x: -x[1]):
+        lines.append(f"  {mg}：{cnt}组")
+    lines.append("")
+
+    # 目标导向建议
+    if goal == "增肌":
+        lines.append("**💪 增肌建议**")
+        if muscle_groups.get("胸", 0) < 15:
+            lines.append("  • 胸：目前偏少，建议每周至少10-12组")
+        if muscle_groups.get("背", 0) < 15:
+            lines.append("  • 背：建议多加入引体、划船等垂直拉")
+        if muscle_groups.get("腿", 0) < 10:
+            lines.append("  • 腿：增肌关键，建议每周至少8-10组深蹲/腿举")
+        if muscle_groups.get("肩", 0) < 5:
+            lines.append("  • 肩：容易被忽略，建议加 Face pull / 侧平举")
+        # 训练频率
+        freq_per_week = total_workouts / 2
+        if freq_per_week < 4:
+            lines.append(f"  • 频率：目前约{('%.1f' % freq_per_week)}次/周，增肌建议4-5次")
+        # 单组数
+        avg_sets_per_workout = total_sets // max(total_workouts, 1)
+        if avg_sets_per_workout < 10:
+            lines.append(f"  • 容量：目前每练约{avg_sets_per_workout}组，建议逐步提升到12-15组/日")
+        lines.append("")
+        lines.append("**🔄 进阶方向**")
+        lines.append("  • 重量稳定后每2-3周尝试加2.5-5kg（渐进超负荷）")
+        lines.append("  • 同一动作可尝试不同的握法/角度（多角度刺激）")
+        lines.append("  • 大肌群组间休息60-90秒，孤立动作可短一些")
+
+    elif goal == "减脂":
+        lines.append("**🔥 减脂建议**")
+        if muscle_groups.get("胸", 0) < 10:
+            lines.append("  • 胸：保持肌肉，建议每周8-10组")
+        if muscle_groups.get("背", 0) < 10:
+            lines.append("  • 背：基础代谢关键，多练拉类动作")
+        if muscle_groups.get("腿", 0) < 8:
+            lines.append("  • 腿：下半身大肌群燃脂效率高，加强")
+        freq_per_week = total_workouts / 2
+        if freq_per_week < 4:
+            lines.append(f"  • 频率：目前约{('%.1f' % freq_per_week)}次/周，减脂建议4-5次保持肌肉")
+        avg_dur = total_duration // max(total_workouts, 1)
+        if avg_dur < 30:
+            lines.append(f"  • 时长：目前约{avg_dur}分钟/次，建议30-45分钟/次")
+        lines.append("")
+        lines.append("**🔄 进阶方向**")
+        lines.append("  • 有氧+力量结合：力量后加15-20分钟HIIT")
+        lines.append("  • 训练节奏加快：减少组间休息（60秒以内）")
+        lines.append("  • 容量适中即可，重点是保持肌肉不流失")
+
+    lines.append("━━━━━━━━━━━━━━━")
+    lines.append("如需我根据以上分析生成新的训练计划，请说「帮我更新计划」")
+
+    return "\n".join(lines)
 
 def plan_set(json_str: str):
     """从JSON字符串设置计划"""
@@ -485,6 +613,9 @@ def reset_today():
     """重置今日训练（兼容新旧history格式）"""
     if os.path.exists(CURRENT_FILE):
         os.remove(CURRENT_FILE)
+    session_file = os.path.join(DATA_DIR, ".session.json")
+    if os.path.exists(session_file):
+        os.remove(session_file)
     today = str(_get_session_date())
     hist_data = load_json(HISTORY_FILE, {})
     if isinstance(hist_data, dict) and "records" in hist_data:
@@ -589,6 +720,83 @@ def history_table(days: int = 30):
         return None
     return recent
 
+def _history_append_workout(date_str: str, workout_data: dict):
+    """向 history.json 追加训练数据（合并同动作的组，不覆盖其他动作）
+
+    workout_data 格式: {"exercises": [{"name": "...", "weight_kg": N, "sets": [{"reps": X}]}], "summary": ""}
+    """
+    raw = load_json(HISTORY_FILE, None)
+    now = _get_session_dt_local().isoformat()
+
+    # 初始化
+    if raw is None:
+        hist_data = {"records": [], "plan_versions": [], "snapshots": []}
+    elif isinstance(raw, list):
+        hist_data = {
+            "records": [{"date": r.get("date"), "type": "workout", "logged_at": r.get("started_at", now), "workout": _normalize_workout_legacy(r)} for r in raw],
+            "plan_versions": [], "snapshots": []
+        }
+    elif isinstance(raw, dict):
+        hist_data = raw
+        if "records" not in hist_data:
+            hist_data["records"] = []
+        if "plan_versions" not in hist_data:
+            hist_data["plan_versions"] = []
+        if "snapshots" not in hist_data:
+            hist_data["snapshots"] = []
+    else:
+        hist_data = {"records": [], "plan_versions": [], "snapshots": []}
+
+    # 找当天已有的 workout 记录
+    existing = None
+    existing_idx = None
+    for i, rec in enumerate(hist_data["records"]):
+        if rec.get("date") == date_str and rec.get("type") == "workout":
+            existing = rec
+            existing_idx = i
+            break
+
+    new_exercises = workout_data.get("exercises", [])
+
+    if existing is None:
+        # 全新记录，同时计算时长（从现在开始）
+        now = _get_session_dt_local().isoformat()
+        started_at = now
+        dur_mins = 0
+        record = {
+            "date": date_str,
+            "type": "workout",
+            "logged_at": now,
+            "session_started_at": started_at,
+            "workout": {
+                "summary": workout_data.get("summary", ""),
+                "exercises": new_exercises,
+                "note": workout_data.get("note", ""),
+                "duration_min": dur_mins
+            }
+        }
+        hist_data["records"].insert(0, record)
+    else:
+        # 合并：同动作合并 sets，不同动作追加
+        existing_wd = existing.get("workout", {})
+        existing_map = {e["name"]: e for e in existing_wd.get("exercises", [])}
+
+        for new_e in new_exercises:
+            name = new_e.get("name")
+            if name in existing_map:
+                # 合并 sets
+                existing_map[name]["sets"].extend(new_e.get("sets", []))
+            else:
+                existing_map[name] = new_e
+
+        existing_wd["exercises"] = list(existing_map.values())
+        if workout_data.get("summary"):
+            existing_wd["summary"] = workout_data["summary"]
+        existing["logged_at"] = now  # 只更新 logged_at（展示用），不更新 session_started_at
+        hist_data["records"][existing_idx] = existing
+
+    save_json(HISTORY_FILE, hist_data)
+
 def _history_add(date_str: str, record_type: str, workout_data=None, status=None, detail=None, reason=None):
     """向history.json追加记录（新版统一格式，自动迁移旧数据）"""
     raw = load_json(HISTORY_FILE, None)
@@ -616,17 +824,8 @@ def _history_add(date_str: str, record_type: str, workout_data=None, status=None
         hist_data = {"records": [], "plan_versions": [], "snapshots": []}
 
     if record_type == "workout":
-        record = {
-            "date": date_str,
-            "type": "workout",
-            "logged_at": now,
-            "workout": workout_data or {}
-        }
-        # 兼容旧格式：如果传入的是旧格式的 completed 列表
-        if isinstance(workout_data, dict) and "completed" in workout_data:
-            record["workout"] = _normalize_workout_legacy(workout_data)
-        hist_data["records"] = [r for r in hist_data["records"] if not (r.get("date") == date_str and r.get("type") == "workout")]
-        hist_data["records"].insert(0, record)
+        # 对于 workout，调用追加函数（合并同动作组）
+        _history_append_workout(date_str, workout_data or {})
     elif record_type == "status":
         record = {
             "date": date_str,
@@ -713,7 +912,7 @@ def report_today(ref_date: str = None):
                 lines.append(f"🏋️ 训练：{'；'.join(ex_lines) if ex_lines else summary}")
             else:
                 lines.append(f"🏋️ 训练：{'；'.join(ex_lines)}")
-            if dur:
+            if dur is not None and dur >= 0:
                 lines.append(f"⏱️ 约 {dur} 分钟")
     else:
         lines.append("🏋️ 训练：无记录")
@@ -926,6 +1125,8 @@ if __name__ == "__main__":
             print(plan_import(sys.argv[3] if len(sys.argv) > 3 else ""))
         elif sub == "view":
             print(plan_view())
+        elif sub == "suggest":
+            print(suggest_plan())
         else:
             print(f"未知子命令: {sub}")
 
@@ -937,7 +1138,39 @@ if __name__ == "__main__":
         print(start_workout(hint))
 
     elif cmd == "status":
-        print(json.dumps(workout_status() or {}, ensure_ascii=False))
+        # 显示今日训练当前状态（动作+组数+剩余计划）
+        today = str(_get_session_date())
+        hist_data = load_json(HISTORY_FILE, {"records": []})
+        today_rec = None
+        for rec in hist_data.get("records", []):
+            if rec.get("date") == today and rec.get("type") == "workout":
+                today_rec = rec
+                break
+        lines = [f"📋 今日训练状态（{today}）"]
+        if today_rec:
+            wd = today_rec.get("workout", {})
+            exercises = wd.get("exercises", [])
+            if exercises:
+                lines.append("  已完成动作：")
+                for e in exercises:
+                    sets = e.get("sets", [])
+                    w = f"{e.get('weight_kg','')}kg" if e.get("weight_kg") else "自重"
+                    reps_list = [str(s.get("reps", "?")) for s in sets]
+                    lines.append(f"    {e['name']} {w} × {len(sets)}组 ({', '.join(reps_list)}个)")
+            else:
+                lines.append("  （无训练记录）")
+        else:
+            lines.append("  （无训练记录）")
+        # 显示今日计划（如果有 session）
+        session_file = os.path.join(DATA_DIR, ".session.json")
+        if os.path.exists(session_file):
+            session = load_json(session_file)
+            plan = session.get("plan", [])
+            if plan:
+                lines.append("  今日计划：")
+                for a in plan:
+                    lines.append(f"    {a['name']} {a.get('weight_kg','')}kg × {len(a.get('sets',[]))}组")
+        print("\n".join(lines))
 
     elif cmd == "complete-set":
         reps = int(sys.argv[2]) if len(sys.argv) > 2 else 0
@@ -1024,7 +1257,8 @@ if __name__ == "__main__":
             print(f"未知子命令: {sub}，可用: get / update / log / view / history")
 
     elif cmd == "log":
-        # workout.py log "2026-04-20" '{"summary":"练了背","exercises":[...],"duration_min":null}'
+        # workout.py log "2026-04-20" '{"name":"坐姿划船","weight_kg":25,"sets":[{"reps":8}]}'
+        # 追加模式：合并同动作的组，不覆盖当天其他动作
         session_file = os.path.join(DATA_DIR, ".session.json")
         has_session = os.path.exists(session_file)
         session = load_json(session_file) if has_session else None
@@ -1035,34 +1269,65 @@ if __name__ == "__main__":
             print("JSON格式错误")
             sys.exit(1)
 
-        # 如果有 session，先检查计划是否已全部完成
-        auto_finished = False
+        if not data.get("exercises"):
+            # 兼容旧格式：单个动作包装成 exercises 列表
+            name = data.get("name", "未知动作")
+            data = {"exercises": [data], "summary": data.get("summary", "")}
+
+        _history_append_workout(date_str, data)
+
+        # 计算时长：优先用 session 开始时间，否则用当天第一条记录的 session_started_at
+        hist_data = load_json(HISTORY_FILE, {"records": []})
+        dur_mins = None  # None 表示未开始计时
         if has_session and session:
-            plan = session.get("plan")
-            if plan and isinstance(plan, list) and isinstance(data, dict):
-                logged_names = {e.get("name") for e in data.get("exercises", []) if isinstance(e, dict)}
-                planned_names = {a.get("name") for a in plan if isinstance(a, dict)}
-                if planned_names and planned_names <= logged_names:
-                    # 所有计划动作都已记录，自动算时长
-                    started_at = session.get("started_at")
-                    finished_at = _get_session_dt_local().isoformat()
-                    dur_mins = 0
+            started_at = session.get("started_at")
+            if started_at:
+                try:
+                    s = datetime.fromisoformat(started_at)
+                    e = _get_session_dt_local()
+                    dur_mins = int((e - s).total_seconds() / 60)
+                except:
+                    pass
+
+        if dur_mins is None:
+            # 从历史记录的 session_started_at 推算（创建时记录，只更新 logged_at）
+            today_recs = [r for r in hist_data.get("records", [])
+                          if r.get("date") == date_str and r.get("type") == "workout"]
+            if today_recs:
+                first_rec = today_recs[-1]  # insert(0) 所以最后一条最旧
+                started_at = first_rec.get("session_started_at") or first_rec.get("logged_at")
+                if started_at:
                     try:
                         s = datetime.fromisoformat(started_at)
-                        e = datetime.fromisoformat(finished_at)
+                        e = _get_session_dt_local()
                         dur_mins = int((e - s).total_seconds() / 60)
                     except:
                         pass
-                    data["duration_min"] = dur_mins
-                    auto_finished = True
 
-        _history_add(date_str, "workout", workout_data=data)
-        if auto_finished:
-            os.remove(session_file)
-            print(f"✅ 已记录训练：{data.get('summary', '训练记录')}（{date_str}）")
-            print(f"🏁 计划动作全部完成，自动结束训练，用时约 {data.get('duration_min')} 分钟")
-        else:
-            print(f"✅ 已记录训练：{data.get('summary', '训练记录')}（{date_str}）")
+        # 强制更新 duration_min（每次报告/记录都重新计算）
+        updated = False
+        for rec in hist_data.get("records", []):
+            if rec.get("date") == date_str and rec.get("type") == "workout":
+                if rec["workout"].get("duration_min") != dur_mins:
+                    rec["workout"]["duration_min"] = dur_mins
+                    updated = True
+        if updated:
+            save_json(HISTORY_FILE, hist_data)
+
+        # 检查是否需要自动结束
+        if has_session and session:
+            plan = session.get("plan")
+            if plan and isinstance(plan, list):
+                logged_names = {e.get("name") for e in data.get("exercises", []) if isinstance(e, dict)}
+                planned_names = {a.get("name") for a in plan if isinstance(a, dict)}
+                if planned_names and planned_names <= logged_names:
+                    os.remove(session_file)
+                    print(f"✅ 已记录：{', '.join(e['name'] for e in data.get('exercises', []))}（{date_str}）")
+                    print(f"🏁 计划动作全部完成，用时约 {dur_mins} 分钟")
+                    sys.exit(0)
+
+        exercise_names = ", ".join(e["name"] for e in data.get("exercises", []))
+        print(f"✅ 已记录：{exercise_names}（{date_str}）{'（约' + str(dur_mins) + '分钟）' if dur_mins > 0 else ''}")
 
     elif cmd == "status-log":
         # workout.py status-log "2026-04-20" tired "昨晚没睡好"
@@ -1104,6 +1369,9 @@ if __name__ == "__main__":
     elif cmd == "start-session":
         # 开启训练计时会话（不依赖 guided start workflow）
         session_file = os.path.join(DATA_DIR, ".session.json")
+        # 清理可能残留的旧 session（防止跨 session 残留数据）
+        if os.path.exists(session_file):
+            os.remove(session_file)
         # 自动读取今日计划写入 session，用于判断是否全部完成
         plan = load_json(PLAN_FILE)
         today_plan = None
